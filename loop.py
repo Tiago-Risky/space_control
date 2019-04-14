@@ -1,10 +1,20 @@
 import time
+import datetime
 import serial
+from influxdb import InfluxDBClient
+import random
 
 import cv2
 from imutils.video import VideoStream
 import imutils
 import numpy as np
+
+#Arduino device
+arduinoDevice = "/dev/ttyUSB0"
+#arduinoDevice = "/dev/ttyACP0"
+
+#debug
+debug = False
 
 #Period in seconds for every loop
 period = 120
@@ -24,16 +34,22 @@ last_arduino_read = 0 #epoch time
 last_camera_read = 0 #epoch time at start of reading
 
 #
-s = 0
+s = "0"
 r = False
-h = 0
-t = 0
-l = 0
+h = "0.0"
+t = "0.0"
+l = "0"
 
+
+conn = None
 
 def loop():
     global flag_radar
-    global s, r, h, t, l
+    global s
+    global r
+    global h
+    global t
+    global l
     #main loop
     last_arduino_read = time.time()
 
@@ -61,23 +77,37 @@ def loop():
 
 def cameraLoop():
     print("Processing image")
-    people = Camera().main()
+    if not debug:
+        people = Camera().main()
+    else:
+        people = random.randint(0,5)
+    conn.flushInput()
+    conn.flushOutput()
     print(people)
     return people
 
-
-def readArduino():
+def bootArduino():
+    global conn
     try:
-        conn = serial.Serial("/dev/ttyACM0", 9600)
+        conn = serial.Serial(arduinoDevice, 9600)
     except serial.SerialException as e:
         print("Fail to connect: {}".format(e))
         exit()
-    
-    dataarr = {0,0}
+    time.sleep(5)
+
+def readArduino():
+    global conn
+    dataarr = []
     while(len(dataarr)!=5):
-        data = conn.readline().decode()
+        try:
+            data = conn.readline().decode()
+        except serial.SerialException as e:
+            print("Failed to read, trying again. {}".format(e))
+            data = ""
+        print(data)
         data = data.strip()
         dataarr = data.split(",")
+        print(dataarr)
         if len(dataarr) == 5:
             s,r,h,t,l = dataarr
 
@@ -90,9 +120,61 @@ def readArduino():
 
 #Takes temperature, humidity, luminosity, movement, people
 def writeToDB(s,r,h,t,l,d):
+    dt = datetime.datetime.now()
+    dt_str = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if r:
+        r_val = "true"
+    else:
+        r_val = "false"
 
-    #Returns true if it wrote to the DB successfully, false if fail
-    return True
+    client = InfluxDBClient(host='192.168.100.63',port=8086)
+    client.switch_database('spacecontrol')
+    
+    json_body = [
+    {
+    "measurement": "radar",
+    "tags": {"sensor":s},
+    "time": dt_str,
+    "fields": {
+        "value": r_val
+        }
+    },
+    {
+    "measurement": "humidity",
+    "tags": {"sensor":s},
+    "time": dt_str,
+    "fields": {
+        "value": h
+        }
+    },
+    {
+    "measurement": "temperature",
+    "tags": {"sensor":s},
+    "time": dt_str,
+    "fields": {
+        "value": t
+        }
+    },
+    {
+    "measurement": "lumens",
+    "tags": {"sensor":s},
+    "time": dt_str,
+    "fields": {
+        "value": l
+        }
+    },
+    {
+    "measurement": "detection",
+    "tags": {"sensor":"1"},
+    "time": dt_str,
+    "fields": {
+        "value": str(d)
+        }
+    }
+    ]
+
+    client.write_points(json_body)
+
 
 class Camera():
     colours = None
@@ -106,7 +188,7 @@ class Camera():
     yolov3_weights = "yolov3.weights"
 
     def main(self):
-        vs = VideoStream(src=0).start()
+        vs = VideoStream(usePiCamera=True).start()
 
         with open(self.yolov3_classes, 'r') as f:
             self.classes = [line.strip() for line in f.readlines()]
@@ -183,6 +265,6 @@ class Camera():
         cv2.rectangle(img, (x,y), (x_plus_w,y_plus_h), colour, 2)
         cv2.putText(img, label, (x-10,y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2)
 
-
+bootArduino()
 while(True):
     loop()
