@@ -1,4 +1,5 @@
 import time
+import serial
 
 import cv2
 from imutils.video import VideoStream
@@ -22,12 +23,23 @@ flag_detection_when = 0 #epoch time
 last_arduino_read = 0 #epoch time
 last_camera_read = 0 #epoch time at start of reading
 
+#
+s = 0
+r = False
+h = 0
+t = 0
+l = 0
+
 
 def loop():
+    global flag_radar
+    global s, r, h, t, l
     #main loop
-    d = 0
-    t, h, l, r = readArduino()
     last_arduino_read = time.time()
+
+    d = 0
+    #s,r,h,t,l = readArduino()
+    print(s,r,h,t,l)
 
     if(r):
         flag_radar = True
@@ -35,32 +47,49 @@ def loop():
     if(flag_radar):
         d = cameraLoop()
 
-    writeToDB(t,h,l,r,d)
+    writeToDB(s,r,h,t,l,d)
 
     now = time.time()
     if now < last_arduino_read+period:
         now = time.time()
         loop_time = now-last_arduino_read 
         while loop_time > 0:
-            t,h,l,r = readArduino()
+            s,r,h,t,l = readArduino()
             if r:
+                flag_radar = True
                 break
 
 def cameraLoop():
+    print("Processing image")
     people = Camera().main()
+    print(people)
     return people
 
 
 def readArduino():
-    t=0
-    h=0
-    l=0
-    r=False
+    try:
+        conn = serial.Serial("/dev/ttyACM0", 9600)
+    except serial.SerialException as e:
+        print("Fail to connect: {}".format(e))
+        exit()
+    
+    dataarr = {0,0}
+    while(len(dataarr)!=5):
+        data = conn.readline().decode()
+        data = data.strip()
+        dataarr = data.split(",")
+        if len(dataarr) == 5:
+            s,r,h,t,l = dataarr
+
+    if r=="1":
+        r_bool = True
+    else:
+        r_bool = False
     #Returns temperature, humidity, luminosity, movement
-    return t,h,l,r
+    return s,r_bool,h,t,l
 
 #Takes temperature, humidity, luminosity, movement, people
-def writeToDB(t,h,l,r,d):
+def writeToDB(s,r,h,t,l,d):
 
     #Returns true if it wrote to the DB successfully, false if fail
     return True
@@ -153,3 +182,7 @@ class Camera():
         colour = self.colours[class_id]
         cv2.rectangle(img, (x,y), (x_plus_w,y_plus_h), colour, 2)
         cv2.putText(img, label, (x-10,y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2)
+
+
+while(True):
+    loop()
