@@ -26,8 +26,8 @@ threshold_detection = 10 * 60
 #flags
 flag_radar = False
 flag_radar_when = 0 #epoch time
-flag_detection = False
-flag_detection_when = 0 #epoch time
+flag_emptydetection = False
+flag_emptydetetion_when = 0 #epoch time
 
 #time variables
 last_arduino_read = 0 #epoch time
@@ -40,6 +40,9 @@ h = "0.0"
 t = "0.0"
 l = "0"
 
+#messages to send to arduino
+msgLedOff = "ledoff"
+msgLedOn = "ledon"
 
 conn = None
 
@@ -59,9 +62,16 @@ def loop():
 
     if(r):
         flag_radar = True
+        flag_radar_when = time.time()
 
     if(flag_radar):
         d = cameraLoop()
+
+    now = time.time()
+    if now >= flag_radar_when+period:
+        d = cameraLoop()
+        if d==0:
+            writeArduino(msgLedOff)
 
     writeToDB(s,r,h,t,l,d)
 
@@ -73,7 +83,9 @@ def loop():
             s,r,h,t,l = readArduino()
             if r:
                 flag_radar = True
+                flag_radar_when = time.time()
                 break
+            loop_time = now-last_arduino_read
 
 def cameraLoop():
     print("Processing image")
@@ -117,6 +129,14 @@ def readArduino():
         r_bool = False
     #Returns temperature, humidity, luminosity, movement
     return s,r_bool,h,t,l
+
+def writeArduino(arg):
+    global conn
+    msgToSend = arg + '\n'
+    x = msgToSend.encode('ascii')
+    conn.write(x)
+    if debug:
+        print("{} sent to Arduino".format(x))
 
 #Takes temperature, humidity, luminosity, movement, people
 def writeToDB(s,r,h,t,l,d):
@@ -266,5 +286,6 @@ class Camera():
         cv2.putText(img, label, (x-10,y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2)
 
 bootArduino()
+flag_radar_when = time.time()
 while(True):
     loop()
